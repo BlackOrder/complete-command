@@ -7,7 +7,7 @@ actions:
     template:
       rg:   "rg {{literal? -F}} {{ignore? -i}} {{word? -w}} {{hidden? -uu}} {{filesWith? -l}} {{ctx|-C %d}} {{glob|-g '%s'}} '{{query}}' {{dir|%s}}"
       grep: "grep -R -n {{ignore? -i}} {{word? -w}} {{filesWith? -l}} {{literal? -F}} {{ctx|-C %d}} '{{query}}' {{dir|%s}}"
-      awk:  "awk '/{{regex}}/ {print FILENAME":"FNR":"$0}' $(find {{dir|%s}} -type f)"
+      awk:  "awk '/{{regex}}/ {print FILENAME\":\"FNR\":\"$0}' $(find {{dir|%s}} -type f)"
     fields:
       - {key: query,  type: string, required: true, placeholder: "pattern"}
       - {key: dir,    type: path,   default: "."}
