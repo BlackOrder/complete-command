@@ -6,6 +6,7 @@ import (
 
     "github.com/BlackOrder/complete-command/internal/actions"
     "github.com/BlackOrder/complete-command/internal/config"
+    "github.com/BlackOrder/complete-command/internal/integration"
 
     "github.com/charmbracelet/bubbles/list"
     "github.com/charmbracelet/bubbles/textinput"
@@ -38,6 +39,9 @@ type model struct {
     cfg *config.Config
     // prefKey identifies the action associated with this model for preference storage.
     prefKey string
+
+    // shellMsg holds a transient message about shell integration installation/uninstallation.
+    shellMsg string
 }
 
 // NewSearchModel constructs a new search UI model.
@@ -175,6 +179,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     switch msg := msg.(type) {
     case tea.KeyMsg:
         switch msg.String() {
+        case "ctrl+i":
+            // Toggle shell integration and store message.
+            if txt, err := integration.ToggleShellIntegration(); err == nil {
+                m.shellMsg = txt
+            } else {
+                m.shellMsg = "Integration error: " + err.Error()
+            }
+            return m, nil
+        case "ctrl+t":
+            // Cycle to the next available tool.
+            if len(m.tools) > 1 {
+                m.toolIdx = (m.toolIdx + 1) % len(m.tools)
+            }
+            return m, nil
         case "ctrl+c", "esc":
             return m, tea.Quit
         case "tab":
@@ -211,6 +229,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                 m.context--
             }
         case "enter":
+            // If a text input is focused, pressing enter should behave like Build & Insert.
+            if m.query.Focused() || m.dir.Focused() || m.glob.Focused() {
+                opts := actions.SearchOptions{
+                    Query:          m.query.Value(),
+                    Dir:            strings.TrimSpace(m.dir.Value()),
+                    Glob:           strings.TrimSpace(m.glob.Value()),
+                    Word:           m.word,
+                    IgnoreCase:     m.ignoreCase,
+                    Regex:          m.regex,
+                    Context:        m.context,
+                    FilesWithMatch: m.filesWith,
+                    Hidden:         m.hidden,
+                }
+                tool := m.tools[m.toolIdx]
+                m.final = actions.BuildSearchCommand(tool, opts)
+                if m.cfg != nil && m.prefKey != "" {
+                    m.cfg.SetPreference(m.prefKey, string(tool))
+                    _ = config.Save(m.cfg)
+                }
+                return m, tea.Quit
+            }
             switch m.list.Index() {
             case 0:
                 m.ignoreCase = !m.ignoreCase
@@ -268,8 +307,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the UI.
 func (m model) View() string {
-    header := "Search in files • Tool: " + string(m.tools[m.toolIdx]) + "  (←/→ switch)\n"
-    header += "TAB to switch fields • ENTER to toggle/confirm • +/- for context • ESC to cancel\n\n"
+    header := "Search in files • Tool: " + string(m.tools[m.toolIdx]) + "  (Ctrl+T next tool)\n"
+    header += "TAB to switch fields • ENTER to toggle/build • +/- for context • Ctrl+I install/uninstall • ESC to cancel\n"
+    // Show integration message if present.
+    if m.shellMsg != "" {
+        header += m.shellMsg + "\n"
+    }
+    header += "\n"
     return header +
         "Query: " + m.query.View() + "\n" +
         "Dir:   " + m.dir.View() + "\n" +
