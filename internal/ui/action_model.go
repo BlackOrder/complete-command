@@ -270,7 +270,7 @@ func (m actionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
 		case "ctrl+i":
-			if txt, err := integration.ToggleShellIntegration(); err == nil {
+			if txt, err := integration.ToggleShellIntegration(nil); err == nil {
 				m.shellMsg = txt
 			} else {
 				m.shellMsg = "Integration error: " + err.Error()

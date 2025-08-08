@@ -32,7 +32,7 @@ func main() {
 
 	// Handle shell integration installation/uninstallation.
 	if *installShell {
-		txt, err := integration.InstallShellIntegration()
+		txt, err := integration.ToggleShellIntegration(installShell)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
@@ -41,7 +41,7 @@ func main() {
 		return
 	}
 	if *uninstallShell {
-		txt, err := integration.UninstallShellIntegration()
+		txt, err := integration.ToggleShellIntegration(new(bool))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
