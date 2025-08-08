@@ -9,6 +9,7 @@ import (
     "github.com/charmbracelet/bubbles/list"
     "github.com/charmbracelet/bubbles/textinput"
     tea "github.com/charmbracelet/bubbletea"
+    "io"
 )
 
 // model holds the UI state for the search helper.
@@ -118,7 +119,7 @@ func (d itemDelegate) Spacing() int { return 0 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
 // Render draws the item to the writer.
-func (d itemDelegate) Render(w tea.Writer, m list.Model, idx int, listItem list.Item) {
+func (d itemDelegate) Render(w io.Writer, m list.Model, idx int, listItem list.Item) {
     s := listItem.(item)
     prefix := "  "
     if idx == m.Index() {
