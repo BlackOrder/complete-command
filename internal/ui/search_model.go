@@ -1,6 +1,7 @@
 package ui
 
 import (
+    "fmt"
     "strings"
 
     "github.com/BlackOrder/complete-command/internal/actions"
@@ -74,21 +75,14 @@ func NewSearchModelWithConfig(actionID string, cfg *config.Config) model {
         }
     }
 
-    items := []list.Item{
-        item("Toggle Ignore Case"),
-        item("Toggle Word Boundary"),
-        item("Toggle Regex (off=literal)"),
-        item("Toggle Files With Matches"),
-        item("Toggle Show Hidden"),
-        item("Set Context (+/-)"),
-        item("Build & Insert"),
-    }
-    l := list.New(items, itemDelegate{}, 0, 0)
+    // Initialize an empty list; we'll populate its items after constructing the model.
+    l := list.New(nil, itemDelegate{}, 0, 0)
     l.SetShowStatusBar(false)
     l.SetFilteringEnabled(false)
-    l.Title = "Search Options"
+    l.Title = "Search options"
 
-    return model{
+    // Build the model now so we can assign option pointers.
+    m := model{
         tools:   tools,
         toolIdx: 0,
         query:   ti,
@@ -98,38 +92,80 @@ func NewSearchModelWithConfig(actionID string, cfg *config.Config) model {
         cfg:     cfg,
         prefKey: actionID,
     }
+    // Create list items with pointers to the model's fields so the delegate can
+    // display current toggle and numeric values.
+    boolItems := []list.Item{
+        boolOptItem{label: "Ignore case", val: &m.ignoreCase},
+        boolOptItem{label: "Word boundary", val: &m.word},
+        boolOptItem{label: "Use regex", val: &m.regex},
+        boolOptItem{label: "Only filenames", val: &m.filesWith},
+        boolOptItem{label: "Include hidden", val: &m.hidden},
+    }
+    intItem := intOptItem{label: "Context lines", val: &m.context}
+    buildItem := simpleItem{label: "Build & Insert"}
+    // Set the list's items in the proper order.
+    m.list.SetItems(append(append(boolItems, intItem), buildItem))
+    return m
 }
 
 // item is a simple list item type.
-type item string
+// boolOptItem represents a toggleable boolean option. The val pointer is
+// dereferenced to determine the current state.
+type boolOptItem struct {
+    label string
+    val   *bool
+}
 
-// FilterValue returns the value used for filtering items.
-func (i item) FilterValue() string { return string(i) }
+func (b boolOptItem) FilterValue() string { return b.label }
 
-// itemDelegate implements list item rendering.
+// intOptItem represents an integer option. The val pointer holds the current
+// numeric value, typically modified via +/- keys.
+type intOptItem struct {
+    label string
+    val   *int
+}
+
+func (i intOptItem) FilterValue() string { return i.label }
+
+// simpleItem represents a non-toggle list entry, such as the build command.
+type simpleItem struct {
+    label string
+}
+
+func (s simpleItem) FilterValue() string { return s.label }
+
+// itemDelegate implements list item rendering for the search options. It
+// displays the current state of boolean and integer options inline.
 type itemDelegate struct{}
 
-// Height returns the height of each list item.
 func (d itemDelegate) Height() int { return 1 }
-
-// Spacing returns the spacing between list items.
 func (d itemDelegate) Spacing() int { return 0 }
-
-// Update handles list item update messages.
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-
-// Render draws the item to the writer.
 func (d itemDelegate) Render(w io.Writer, m list.Model, idx int, listItem list.Item) {
-    s := listItem.(item)
     prefix := "  "
     if idx == m.Index() {
         prefix = "> "
     }
-    w.Write([]byte(prefix + string(s) + "\n"))
+    switch it := listItem.(type) {
+    case boolOptItem:
+        state := "[ ]"
+        if it.val != nil && *it.val {
+            state = "[x]"
+        }
+        fmt.Fprintf(w, "%s%s %s\n", prefix, state, it.label)
+    case intOptItem:
+        val := 0
+        if it.val != nil {
+            val = *it.val
+        }
+        fmt.Fprintf(w, "%s[%d] %s\n", prefix, val, it.label)
+    case simpleItem:
+        fmt.Fprintf(w, "%s%s\n", prefix, it.label)
+    default:
+        // Fallback rendering for unexpected types
+        fmt.Fprintf(w, "%s%v\n", prefix, it)
+    }
 }
-
-// resizeMsg is a custom message used to resize the list when the terminal changes.
-type resizeMsg struct{ w, h int }
 
 // Init initializes the model.
 func (m model) Init() tea.Cmd { return nil }
@@ -137,17 +173,12 @@ func (m model) Init() tea.Cmd { return nil }
 // Update handles incoming events and updates the model accordingly.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     switch msg := msg.(type) {
-    case tea.WindowSizeMsg:
-        // Adjust list size when the window changes.
-        return m, func() tea.Msg { return resizeMsg{msg.Width, msg.Height} }
-    case resizeMsg:
-        m.list.SetSize(msg.w, msg.h-8)
     case tea.KeyMsg:
         switch msg.String() {
         case "ctrl+c", "esc":
             return m, tea.Quit
         case "tab":
-            // cycle focus: query -> dir -> glob -> list -> query
+            // Cycle focus through inputs and list.
             if m.query.Focused() {
                 m.query.Blur()
                 m.dir.Focus()
@@ -156,6 +187,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                 m.glob.Focus()
             } else if m.glob.Focused() {
                 m.glob.Blur()
+                // Focus the list by selecting the first item.
                 m.list.Select(0)
             } else {
                 m.query.Focus()
@@ -167,6 +199,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         case "right":
             if m.toolIdx < len(m.tools)-1 {
                 m.toolIdx++
+            }
+        case "+":
+            // Increase context lines when the context option is selected.
+            if m.list.Index() == 5 {
+                m.context++
+            }
+        case "-", "_":
+            // Decrease context lines when selected.
+            if m.list.Index() == 5 && m.context > 0 {
+                m.context--
             }
         case "enter":
             switch m.list.Index() {
@@ -181,7 +223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
             case 4:
                 m.hidden = !m.hidden
             case 5:
-                // context is modified via +/- keys.
+                // context lines option; do nothing on enter
             case 6:
                 // Build final command and exit. Also save the selected tool as a preference.
                 opts := actions.SearchOptions{
@@ -200,20 +242,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                 // Persist preference if config is available.
                 if m.cfg != nil && m.prefKey != "" {
                     m.cfg.SetPreference(m.prefKey, string(tool))
-                    // ignore save error silently
                     _ = config.Save(m.cfg)
                 }
                 return m, tea.Quit
             }
-        case "+":
-            m.context++
-        case "-", "_":
-            if m.context > 0 {
-                m.context--
-            }
         }
     }
-    // Pass messages to focused input or list.
+    // Pass messages to the focused input or list.
     var cmd tea.Cmd
     if m.query.Focused() {
         m.query, cmd = m.query.Update(msg)
