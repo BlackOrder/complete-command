@@ -1,0 +1,183 @@
+actions:
+  # --- Searching ---
+  - id: search/files
+    title: Search in files
+    synonyms: [search, find, grep, ripgrep, look]
+    candidates: [rg, grep, awk]
+    template:
+      rg:   "rg {{literal? -F}} {{ignore? -i}} {{word? -w}} {{hidden? -uu}} {{filesWith? -l}} {{ctx|-C %d}} {{glob|-g '%s'}} '{{query}}' {{dir|%s}}"
+      grep: "grep -R -n {{ignore? -i}} {{word? -w}} {{filesWith? -l}} {{literal? -F}} {{ctx|-C %d}} '{{query}}' {{dir|%s}}"
+      awk:  "awk '/{{regex}}/ {print FILENAME":"FNR":"$0}' $(find {{dir|%s}} -type f)"
+    fields:
+      - {key: query,  type: string, required: true, placeholder: "pattern"}
+      - {key: dir,    type: path,   default: "."}
+      - {key: glob,   type: string, showIf: tool=rg}
+      - {key: literal,type: bool,   default: true, label: "Literal match (not regex)"}
+      - {key: ignore, type: bool,   label: "Ignore case"}
+      - {key: word,   type: bool,   label: "Word boundary"}
+      - {key: filesWith, type: bool, label: "Only filenames"}
+      - {key: hidden, type: bool,   showIf: tool=rg, label: "Include hidden"}
+      - {key: ctx,    type: int,    min: 0, label: "Context lines"}
+
+  # --- Networking ---
+  - id: net/ping
+    title: Ping host
+    synonyms: [ping, check network, latency]
+    candidates: [ping]
+    template:
+      ping: "ping {{count|-c %d}} {{interval|-i %g}} {{host}}"
+    fields:
+      - {key: host, type: string, required: true, placeholder: "example.com or 1.1.1.1"}
+      - {key: count, type: int, default: 4, min: 1}
+      - {key: interval, type: float, default: 0.2, min: 0.1}
+
+  - id: net/dns-lookup
+    title: DNS lookup
+    synonyms: [dig, nslookup, dns, host]
+    candidates: [dig, host, nslookup]
+    template:
+      dig:  "dig {{reverse? -x}} {{short? +short}} {{name}}"
+      host: "host {{reverse? -t PTR}} {{name}}"
+      nslookup: "nslookup {{name}}"
+    fields:
+      - {key: name, type: string, required: true, placeholder: "domain or IP"}
+      - {key: reverse, type: bool, label: "Reverse lookup"}
+      - {key: short, type: bool, label: "Short output", showIf: tool=dig}
+
+  - id: net/http
+    title: HTTP request
+    synonyms: [curl, http, download, get]
+    candidates: [curl, http]
+    template:
+      curl: "curl -sS {{method|-X %s}} {{header|-H '%s'}} {{data|--data '%s'}} {{output|-o '%s'}} {{url}}"
+      http: "http {{method}} {{header}} {{data}} {{url}}"
+    fields:
+      - {key: url, type: string, required: true}
+      - {key: method, type: enum, choices: [GET, POST, PUT, PATCH, DELETE], default: GET}
+      - {key: header, type: multi, entry: "Header:Value"}
+      - {key: data, type: string, showIf: method!=GET}
+      - {key: output, type: path}
+
+  # --- Users & Groups ---
+  - id: user/add
+    title: Add user
+    synonyms: [adduser, new user, useradd]
+    candidates: [adduser, useradd]
+    template:
+      adduser: "sudo adduser {{name}}"
+      useradd: "sudo useradd -m {{name}}"
+    fields:
+      - {key: name, type: string, required: true}
+
+  - id: user/mod-group
+    title: Add user to group
+    synonyms: [group, usermod, add to group]
+    candidates: [usermod, gpasswd]
+    template:
+      usermod: "sudo usermod -aG {{group}} {{name}}"
+      gpasswd: "sudo gpasswd -a {{name}} {{group}}"
+    fields:
+      - {key: name, type: string, required: true}
+      - {key: group, type: string, required: true}
+
+  # --- File commands ---
+  - id: file/find
+    title: Find files
+    synonyms: [find, locate, search files]
+    candidates: [fd, find]
+    template:
+      fd:   "fd {{glob}} {{dir|%s}}"
+      find: "find {{dir|%s}} -name '{{glob}}'"
+    fields:
+      - {key: dir,  type: path, default: "."}
+      - {key: glob, type: string, required: true, placeholder: "*.log"}
+
+  - id: file/ls
+    title: List files
+    synonyms: [ls, list directory]
+    candidates: [ls, exa]
+    template:
+      ls:  "ls -lah {{all? -A}} {{dir|%s}}"
+      exa: "exa -lah {{dir|%s}}"
+    fields:
+      - {key: dir, type: path, default: "."}
+      - {key: all, type: bool, label: "Include dotfiles"}
+
+  # --- Compression ---
+  - id: compress/tar-gz
+    title: Create tar.gz
+    synonyms: [tar, gzip, compress]
+    candidates: [tar]
+    template:
+      tar: "tar -czf {{archive}} {{paths}}"
+    fields:
+      - {key: archive, type: path, required: true, placeholder: "out.tgz"}
+      - {key: paths, type: multi, entry: "path"}
+
+  - id: decompress/zip
+    title: Unzip file
+    synonyms: [unzip, extract zip]
+    candidates: [unzip, 7z]
+    template:
+      unzip: "unzip {{file}} -d {{dir|%s}}"
+      7z: "7z x {{file}} -o{{dir|%s}}"
+    fields:
+      - {key: file, type: path, required: true}
+      - {key: dir,  type: path, default: "."}
+
+  # --- Packages ---
+  - id: pkg/search
+    title: Search package
+    synonyms: [apt search, dnf search, pacman -Ss, yum search]
+    candidates: [apt, dnf, pacman, yum, zypper]
+    template:
+      apt:    "apt-cache search {{term}}"
+      dnf:    "dnf search {{term}}"
+      pacman: "pacman -Ss {{term}}"
+      yum:    "yum search {{term}}"
+      zypper: "zypper se {{term}}"
+    fields:
+      - {key: term, type: string, required: true}
+
+  # --- System and Hardware ---
+  - id: sys/info
+    title: System info
+    synonyms: [uname, uptime, free, lscpu, neofetch]
+    candidates: [neofetch, uname, uptime]
+    template:
+      neofetch: "neofetch"
+      uname: "uname -a && uptime"
+    fields: []
+
+  - id: disk/usage
+    title: Disk usage
+    synonyms: [du, df, lsblk, space]
+    candidates: [du, df, lsblk]
+    template:
+      du: "du -sh {{path|%s}}"
+      df: "df -h {{path|%s}}"
+      lsblk: "lsblk"
+    fields:
+      - {key: path, type: path, default: "."}
+
+  - id: proc/top
+    title: Processes top
+    synonyms: [top, htop, ps]
+    candidates: [htop, top, ps]
+    template:
+      htop: "htop"
+      top:  "top"
+      ps:   "ps aux | sort -nr -k 3 | head -20"
+    fields: []
+
+  # --- SSH ---
+  - id: ssh/login
+    title: SSH login
+    synonyms: [ssh]
+    candidates: [ssh]
+    template:
+      ssh: "ssh {{user?%s@}}{{host}}{{port|-p %d}}"
+    fields:
+      - {key: user, type: string}
+      - {key: host, type: string, required: true}
+      - {key: port, type: int, default: 22, min: 1, max: 65535}

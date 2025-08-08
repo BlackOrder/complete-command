@@ -4,6 +4,7 @@ import (
     "strings"
 
     "github.com/BlackOrder/complete-command/internal/actions"
+    "github.com/BlackOrder/complete-command/internal/config"
 
     "github.com/charmbracelet/bubbles/list"
     "github.com/charmbracelet/bubbles/textinput"
@@ -30,10 +31,25 @@ type model struct {
 
     // final holds the constructed command when the user exits.
     final string
+
+    // cfg references the user configuration for saving preferences. It may be nil.
+    cfg *config.Config
+    // prefKey identifies the action associated with this model for preference storage.
+    prefKey string
 }
 
 // NewSearchModel constructs a new search UI model.
+// NewSearchModel returns a model without configuration. It is equivalent to
+// NewSearchModelWithConfig with an empty preference key and nil config.
 func NewSearchModel() model {
+    return NewSearchModelWithConfig("", nil)
+}
+
+// NewSearchModelWithConfig constructs a new search UI model using the given action
+// identifier and configuration. If cfg is non-nil and contains a preferred
+// tool for the actionID, the tools slice will be reordered to place that tool
+// first.
+func NewSearchModelWithConfig(actionID string, cfg *config.Config) model {
     ti := textinput.New()
     ti.Placeholder = "search query"
     ti.Focus()
@@ -45,6 +61,17 @@ func NewSearchModel() model {
     gi.Placeholder = "glob (e.g. **/*.go)"
 
     tools := actions.AvailableSearchTools()
+    // Reorder tools based on preference if available.
+    if cfg != nil && actionID != "" {
+        if pref, ok := cfg.PreferredTool(actionID); ok {
+            for i, t := range tools {
+                if string(t) == pref {
+                    tools[0], tools[i] = tools[i], tools[0]
+                    break
+                }
+            }
+        }
+    }
 
     items := []list.Item{
         item("Toggle Ignore Case"),
@@ -61,9 +88,14 @@ func NewSearchModel() model {
     l.Title = "Search Options"
 
     return model{
-        tools: tools, toolIdx: 0,
-        query: ti, dir: di, glob: gi,
-        list: l,
+        tools:   tools,
+        toolIdx: 0,
+        query:   ti,
+        dir:     di,
+        glob:    gi,
+        list:    l,
+        cfg:     cfg,
+        prefKey: actionID,
     }
 }
 
@@ -150,7 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
             case 5:
                 // context is modified via +/- keys.
             case 6:
-                // Build final command and exit.
+                // Build final command and exit. Also save the selected tool as a preference.
                 opts := actions.SearchOptions{
                     Query:          m.query.Value(),
                     Dir:            strings.TrimSpace(m.dir.Value()),
@@ -162,7 +194,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
                     FilesWithMatch: m.filesWith,
                     Hidden:         m.hidden,
                 }
-                m.final = actions.BuildSearchCommand(m.tools[m.toolIdx], opts)
+                tool := m.tools[m.toolIdx]
+                m.final = actions.BuildSearchCommand(tool, opts)
+                // Persist preference if config is available.
+                if m.cfg != nil && m.prefKey != "" {
+                    m.cfg.SetPreference(m.prefKey, string(tool))
+                    // ignore save error silently
+                    _ = config.Save(m.cfg)
+                }
                 return m, tea.Quit
             }
         case "+":
