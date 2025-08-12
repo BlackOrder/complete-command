@@ -22,7 +22,7 @@ type Field struct {
     Entry       string      `yaml:"entry"`
 }
 
-// Action defines a single command-building action.
+// Action defines a single command‑building action.
 type Action struct {
     ID         string            `yaml:"id"`
     Title      string            `yaml:"title"`

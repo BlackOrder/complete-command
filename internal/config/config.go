@@ -7,8 +7,8 @@ import (
 )
 
 // Config holds user preferences for command tool selection and other settings.
+// Preferences map an action identifier to the preferred tool name.
 type Config struct {
-    // Preferences maps an action identifier to the preferred tool name.
     Preferences map[string]string `json:"preferences"`
 }
 
@@ -21,8 +21,8 @@ func defaultPath() (string, error) {
     return filepath.Join(home, ".complete-command.json"), nil
 }
 
-// Load reads the configuration from disk. If the file does not exist, it returns
-// a Config with empty preferences.
+// Load reads the configuration from disk. If the file does not exist, it
+// returns a Config with empty preferences.
 func Load() (*Config, error) {
     path, err := defaultPath()
     if err != nil {
