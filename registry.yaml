@@ -181,3 +181,200 @@ actions:
       - {key: user, type: string}
       - {key: host, type: string, required: true}
       - {key: port, type: int, default: 22, min: 1, max: 65535}
+
+  # --- Text Processing ---
+  - id: text/sed-replace
+    title: Find and replace in text
+    synonyms: [sed, replace, substitute]
+    candidates: [sed]
+    template:
+      sed: "sed {{inplace? -i}} 's/{{find}}/{{replace}}/{{global?g}}' {{file}}"
+    fields:
+      - {key: find, type: string, required: true, placeholder: "search pattern"}
+      - {key: replace, type: string, required: true, placeholder: "replacement"}
+      - {key: file, type: path, required: true}
+      - {key: global, type: bool, default: true, label: "Replace all occurrences"}
+      - {key: inplace, type: bool, label: "Edit file in place"}
+
+  - id: text/awk-column
+    title: Extract column from text
+    synonyms: [awk, column, field]
+    candidates: [awk, cut]
+    template:
+      awk: "awk '{{pattern?/%s/ }}{ print ${{column}} }' {{file}}"
+      cut: "cut -d'{{delimiter}}' -f{{column}} {{file}}"
+    fields:
+      - {key: file, type: path, required: true}
+      - {key: column, type: int, required: true, default: 1, min: 1}
+      - {key: pattern, type: string, showIf: tool=awk, placeholder: "optional filter pattern"}
+      - {key: delimiter, type: string, showIf: tool=cut, default: " ", placeholder: "field delimiter"}
+
+  - id: text/sort-unique
+    title: Sort and remove duplicates
+    synonyms: [sort, unique, uniq, dedupe]
+    candidates: [sort]
+    template:
+      sort: "sort {{numeric? -n}} {{reverse? -r}} {{unique? -u}} {{file|%s}}"
+    fields:
+      - {key: file, type: path, default: "-", placeholder: "file (or - for stdin)"}
+      - {key: numeric, type: bool, label: "Numeric sort"}
+      - {key: reverse, type: bool, label: "Reverse order"}
+      - {key: unique, type: bool, label: "Remove duplicates"}
+
+  # --- File Permissions ---
+  - id: file/chmod
+    title: Change file permissions
+    synonyms: [chmod, permissions]
+    candidates: [chmod]
+    template:
+      chmod: "chmod {{recursive? -R}} {{mode}} {{path}}"
+    fields:
+      - {key: path, type: path, required: true}
+      - {key: mode, type: enum, required: true, choices: ["755", "644", "600", "777", "u+x", "g+w", "o-r"], default: "755"}
+      - {key: recursive, type: bool, label: "Apply recursively"}
+
+  - id: file/chown
+    title: Change file ownership
+    synonyms: [chown, owner]
+    candidates: [chown]
+    template:
+      chown: "sudo chown {{recursive? -R}} {{owner}}{{group?:%s}} {{path}}"
+    fields:
+      - {key: path, type: path, required: true}
+      - {key: owner, type: string, required: true}
+      - {key: group, type: string}
+      - {key: recursive, type: bool, label: "Apply recursively"}
+
+  # --- Advanced File Operations ---
+  - id: file/watch
+    title: Watch file changes
+    synonyms: [watch, tail, monitor]
+    candidates: [tail, watch]
+    template:
+      tail: "tail {{follow? -f}} {{lines|-n %d}} {{file}}"
+      watch: "watch {{interval|-n %d}} cat {{file}}"
+    fields:
+      - {key: file, type: path, required: true}
+      - {key: follow, type: bool, default: true, showIf: tool=tail, label: "Follow changes"}
+      - {key: lines, type: int, default: 10, showIf: tool=tail, min: 1, label: "Number of lines"}
+      - {key: interval, type: int, default: 2, showIf: tool=watch, min: 1, label: "Update interval (seconds)"}
+
+  - id: file/rsync
+    title: Sync files/directories
+    synonyms: [rsync, sync, backup, copy]
+    candidates: [rsync, cp]
+    template:
+      rsync: "rsync {{archive? -a}} {{verbose? -v}} {{progress? --progress}} {{delete? --delete}} {{exclude?--exclude '%s'}} {{source}} {{dest}}"
+      cp: "cp {{recursive? -r}} {{preserve? -p}} {{verbose? -v}} {{source}} {{dest}}"
+    fields:
+      - {key: source, type: path, required: true}
+      - {key: dest, type: path, required: true}
+      - {key: archive, type: bool, default: true, showIf: tool=rsync, label: "Archive mode (-a)"}
+      - {key: verbose, type: bool, label: "Verbose output"}
+      - {key: progress, type: bool, showIf: tool=rsync, label: "Show progress"}
+      - {key: delete, type: bool, showIf: tool=rsync, label: "Delete files in destination"}
+      - {key: exclude, type: string, showIf: tool=rsync, placeholder: "exclude pattern"}
+      - {key: recursive, type: bool, default: true, showIf: tool=cp, label: "Copy recursively"}
+      - {key: preserve, type: bool, showIf: tool=cp, label: "Preserve attributes"}
+
+  # --- Process Management ---
+  - id: proc/kill
+    title: Kill process
+    synonyms: [kill, terminate, stop process]
+    candidates: [kill, killall, pkill]
+    template:
+      kill: "kill {{signal|-%s}} {{pid}}"
+      killall: "killall {{signal|-%s}} {{name}}"
+      pkill: "pkill {{signal|-%s}} {{pattern}}"
+    fields:
+      - {key: signal, type: enum, choices: ["TERM", "KILL", "HUP", "USR1", "USR2"], default: "TERM"}
+      - {key: pid, type: int, showIf: tool=kill, required: true, placeholder: "process ID"}
+      - {key: name, type: string, showIf: tool=killall, required: true, placeholder: "process name"}
+      - {key: pattern, type: string, showIf: tool=pkill, required: true, placeholder: "process pattern"}
+
+  - id: proc/pgrep
+    title: Find process by name
+    synonyms: [ps, pgrep, process, find process]
+    candidates: [pgrep, ps, pidof]
+    template:
+      pgrep: "pgrep {{full? -f}} {{exact? -x}} {{list? -l}} {{pattern}}"
+      ps: "ps aux | grep {{pattern}} | grep -v grep"
+      pidof: "pidof {{pattern}}"
+    fields:
+      - {key: pattern, type: string, required: true, placeholder: "process name/pattern"}
+      - {key: full, type: bool, showIf: tool=pgrep, label: "Match full command line"}
+      - {key: exact, type: bool, showIf: tool=pgrep, label: "Exact match"}
+      - {key: list, type: bool, showIf: tool=pgrep, label: "Show process name"}
+
+  # --- System Monitoring ---
+  - id: sys/memory
+    title: Memory usage
+    synonyms: [free, memory, ram]
+    candidates: [free, vm_stat]
+    template:
+      free: "free {{human? -h}} {{total? -t}}"
+      vm_stat: "vm_stat"
+    fields:
+      - {key: human, type: bool, default: true, showIf: tool=free, label: "Human readable"}
+      - {key: total, type: bool, showIf: tool=free, label: "Show totals"}
+
+  - id: sys/iotop
+    title: I/O monitoring
+    synonyms: [iotop, io, disk activity]
+    candidates: [iotop, iostat]
+    template:
+      iotop: "sudo iotop {{accumulate? -a}} {{only? -o}}"
+      iostat: "iostat {{interval|%d}} {{count|%d}}"
+    fields:
+      - {key: accumulate, type: bool, showIf: tool=iotop, label: "Accumulate I/O"}
+      - {key: only, type: bool, showIf: tool=iotop, label: "Only show processes doing I/O"}
+      - {key: interval, type: int, default: 1, showIf: tool=iostat, min: 1}
+      - {key: count, type: int, default: 5, showIf: tool=iostat, min: 1}
+
+  # --- Network Tools ---
+  - id: net/netstat
+    title: Network connections
+    synonyms: [netstat, connections, ports, sockets]
+    candidates: [netstat, ss]
+    template:
+      netstat: "netstat {{listening? -l}} {{tcp? -t}} {{udp? -u}} {{numeric? -n}} {{process? -p}}"
+      ss: "ss {{listening? -l}} {{tcp? -t}} {{udp? -u}} {{numeric? -n}} {{process? -p}}"
+    fields:
+      - {key: listening, type: bool, label: "Show only listening"}
+      - {key: tcp, type: bool, label: "TCP connections"}
+      - {key: udp, type: bool, label: "UDP connections"}
+      - {key: numeric, type: bool, default: true, label: "Numeric addresses"}
+      - {key: process, type: bool, label: "Show process info"}
+
+  - id: net/wget
+    title: Download file
+    synonyms: [wget, download]
+    candidates: [wget, curl]
+    template:
+      wget: "wget {{continue? -c}} {{output|-O %s}} {{recursive? -r}} {{level|--level=%d}} {{url}}"
+      curl: "curl {{continue? -C -}} {{output|-o %s}} {{location? -L}} {{url}}"
+    fields:
+      - {key: url, type: string, required: true}
+      - {key: output, type: path, placeholder: "output filename"}
+      - {key: continue, type: bool, label: "Continue partial download"}
+      - {key: location, type: bool, default: true, showIf: tool=curl, label: "Follow redirects"}
+      - {key: recursive, type: bool, showIf: tool=wget, label: "Recursive download"}
+      - {key: level, type: int, default: 1, showIf: tool=wget, min: 1, max: 10, label: "Recursion depth"}
+
+  # --- Log Analysis ---
+  - id: log/analyze
+    title: Analyze log files
+    synonyms: [log, analyze, grep logs]
+    candidates: [grep, awk, zgrep]
+    template:
+      grep: "grep {{ignore? -i}} {{count? -c}} {{before|-B %d}} {{after|-A %d}} '{{pattern}}' {{file}} {{color?--color=always}}"
+      awk: "awk '/{{pattern}}/ {print $0}' {{file}}"
+      zgrep: "zgrep {{ignore? -i}} {{count? -c}} '{{pattern}}' {{file}}"
+    fields:
+      - {key: pattern, type: string, required: true, placeholder: "search pattern"}
+      - {key: file, type: path, required: true, placeholder: "log file path"}
+      - {key: ignore, type: bool, label: "Ignore case"}
+      - {key: count, type: bool, label: "Count matches only"}
+      - {key: before, type: int, min: 0, label: "Lines before match"}
+      - {key: after, type: int, min: 0, label: "Lines after match"}
+      - {key: color, type: bool, default: true, showIf: tool=grep, label: "Colorize output"}
