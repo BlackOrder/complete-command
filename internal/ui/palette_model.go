@@ -13,6 +13,7 @@ import (
     "strings"
 
     "github.com/BlackOrder/complete-command/internal/config"
+    "github.com/BlackOrder/complete-command/internal/detect"
     "github.com/BlackOrder/complete-command/internal/registry"
 
     "github.com/charmbracelet/bubbles/list"
@@ -99,14 +100,54 @@ func (m paletteModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     return m, cmd
 }
 
-// View renders the palette list along with a colourful header and basic
-// instructions.  The entire view is wrapped in a rounded border to provide
-// an app‑like feel.
+// View renders the palette list along with a colourful header, system information,
+// and basic instructions. The entire view is wrapped in a rounded border.
 func (m paletteModel) View() string {
-    // Colourful header and instructions using lipgloss.
-    title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Command palette")
+    // Get system information for display
+    osInfo := detect.GetOSInfo()
+    
+    // Enhanced header with system info
+    title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Command Palette")
+    
+    var sysInfo string
+    if osInfo != nil {
+        osDisplay := osInfo.OS
+        if osInfo.Distro != "" {
+            osDisplay = fmt.Sprintf("%s (%s)", osInfo.OS, osInfo.Distro)
+        }
+        sysInfo = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render(fmt.Sprintf("System: %s %s", osDisplay, osInfo.Arch))
+    }
+    
+    // Count available tools
+    availableCount := 0
+    totalActions := len(m.list.Items())
+    
+    for _, item := range m.list.Items() {
+        if pItem, ok := item.(paletteItem); ok && pItem.act != nil {
+            for _, candidate := range pItem.act.Candidates {
+                if detect.Has(candidate) {
+                    availableCount++
+                    break // Count action as available if at least one tool is found
+                }
+            }
+        }
+    }
+    
+    statusInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(
+        fmt.Sprintf("Actions: %d available, %d total", availableCount, totalActions))
+    
     instr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Use ↑/↓ or type to filter • Enter to select • ESC to quit")
-    content := fmt.Sprintf("%s\n%s\n\n%s", title, instr, m.list.View())
+    
+    // Build header with system info
+    var header string
+    if sysInfo != "" {
+        header = fmt.Sprintf("%s • %s • %s\n%s\n\n", title, sysInfo, statusInfo, instr)
+    } else {
+        header = fmt.Sprintf("%s • %s\n%s\n\n", title, statusInfo, instr)
+    }
+    
+    content := header + m.list.View()
+    
     // Wrap in a rounded border with padding.
     style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1)
     return style.Render(content)
@@ -132,10 +173,36 @@ func (d paletteDelegate) Render(w io.Writer, m list.Model, idx int, listItem lis
     } else {
         prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ")
     }
+    
     if item, ok := listItem.(paletteItem); ok && item.act != nil {
         title := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Render(item.act.Title)
-        cands := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(strings.Join(item.act.Candidates, "/"))
-        fmt.Fprintf(w, "%s%s (%s)\n", prefix, title, cands)
+        
+        // Build candidates list with availability indicators
+        var candidateDisplay []string
+        hasAvailable := false
+        
+        for _, candidate := range item.act.Candidates {
+            if detect.Has(candidate) {
+                candidateDisplay = append(candidateDisplay, 
+                    lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(candidate))
+                hasAvailable = true
+            } else {
+                candidateDisplay = append(candidateDisplay, 
+                    lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(candidate))
+            }
+        }
+        
+        cands := strings.Join(candidateDisplay, "/")
+        
+        // Add status indicator
+        var statusIcon string
+        if hasAvailable {
+            statusIcon = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓ ")
+        } else {
+            statusIcon = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("✗ ")
+        }
+        
+        fmt.Fprintf(w, "%s%s%s (%s)\n", prefix, statusIcon, title, cands)
     } else {
         // Fallback rendering for unexpected types.
         itemStr := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Render(fmt.Sprint(listItem))

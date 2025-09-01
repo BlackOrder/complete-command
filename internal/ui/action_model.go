@@ -49,6 +49,10 @@ type actionModel struct {
     final   string
     cfg     *config.Config
     prefKey string
+    
+    // enhanced detection
+    osInfo       *detect.OSInfo
+    compatibility *detect.CompatibilityMatrix
 }
 
 // boolFieldItem represents a toggleable boolean option in a dynamic action.
@@ -99,23 +103,82 @@ type staticItem struct {
 
 func (s staticItem) FilterValue() string { return s.label }
 
+// contains checks if a string slice contains a specific string
+func contains(slice []string, item string) bool {
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
+}
+
+// shouldShowField determines if a field should be shown based on showIf conditions
+func shouldShowField(field registry.Field, currentTool string) bool {
+    if field.ShowIf == "" {
+        return true
+    }
+    
+    // Parse showIf condition (e.g., "tool=rg")
+    parts := strings.Split(field.ShowIf, "=")
+    if len(parts) != 2 {
+        return true // Default to showing if condition is malformed
+    }
+    
+    key := strings.TrimSpace(parts[0])
+    value := strings.TrimSpace(parts[1])
+    
+    switch key {
+    case "tool":
+        return currentTool == value
+    default:
+        return true // Unknown conditions default to showing
+    }
+}
+
 // NewActionModel constructs a new dynamic action model for the given action.
 // It uses the provided configuration to reorder tool candidates based on
 // previous preferences. Fields are initialised with defaults when provided.
 func NewActionModel(action registry.Action, cfg *config.Config) actionModel {
-    // Determine available tools by checking candidate binaries in PATH.
+    // Initialize compatibility matrix and get OS info for enhanced tool selection
+    compatibility := detect.NewCompatibilityMatrix()
+    osInfo := detect.GetOSInfo()
+    
+    // Use enhanced tool selection
+    suggestion, err := compatibility.SuggestCommand(action.Candidates, osInfo)
     var available []string
-    for _, c := range action.Candidates {
-        if detect.Has(c) {
-            available = append(available, c)
+    
+    if err == nil {
+        // Start with the recommended tool
+        available = append(available, suggestion.Tool)
+        
+        // Add other available candidates
+        for _, candidate := range action.Candidates {
+            if candidate != suggestion.Tool && detect.Has(candidate) {
+                available = append(available, candidate)
+            }
+        }
+        
+        // Add alternatives if they're available and not already included
+        for _, alt := range suggestion.Alternatives {
+            if detect.Has(alt) && !contains(available, alt) {
+                available = append(available, alt)
+            }
+        }
+    } else {
+        // Fallback to original logic if enhanced detection fails
+        for _, c := range action.Candidates {
+            if detect.Has(c) {
+                available = append(available, c)
+            }
+        }
+        if len(available) == 0 {
+            // If none are found, fallback to listing all candidates anyway
+            available = append(available, action.Candidates...)
         }
     }
-    if len(available) == 0 {
-        // If none are found, fallback to listing all candidates anyway; the
-        // resulting command may still be valid if user has them installed.
-        available = append(available, action.Candidates...)
-    }
-    // Reorder tools based on preference.
+    
+    // Reorder tools based on user preference
     if cfg != nil && action.ID != "" {
         if pref, ok := cfg.PreferredTool(action.ID); ok {
             for i, t := range available {
@@ -126,14 +189,22 @@ func NewActionModel(action registry.Action, cfg *config.Config) actionModel {
             }
         }
     }
+    
     // Prepare input maps and list items.
     strInputs := make(map[string]*textinput.Model)
     var boolItems []boolFieldItem
     var intItems []intFieldItem
     var floatItems []floatFieldItem
     var enumItems []enumFieldItem
-    // Create inputs based on field definitions.
+    
+    // Create inputs based on field definitions, checking visibility conditions
     for _, f := range action.Fields {
+        // Check if field should be shown for the current tool
+        showField := shouldShowField(f, available[0])
+        if !showField {
+            continue
+        }
+        
         label := f.Label
         if label == "" {
             label = f.Key
@@ -223,19 +294,21 @@ func NewActionModel(action registry.Action, cfg *config.Config) actionModel {
     l := list.New(items, actionItemDelegate{}, 0, 0)
     l.SetShowStatusBar(false)
     l.SetFilteringEnabled(false)
-    // Create and return the model.
+    // Create and return the model with enhanced detection info
     return actionModel{
-        action:    action,
-        tools:     available,
-        toolIdx:   0,
-        strInputs: strInputs,
-        boolItems: boolItems,
-        intItems:  intItems,
-        floatItems: floatItems,
-        enumItems: enumItems,
-        list:      l,
-        cfg:       cfg,
-        prefKey:   action.ID,
+        action:        action,
+        tools:         available,
+        toolIdx:       0,
+        strInputs:     strInputs,
+        boolItems:     boolItems,
+        intItems:      intItems,
+        floatItems:    floatItems,
+        enumItems:     enumItems,
+        list:          l,
+        cfg:           cfg,
+        prefKey:       action.ID,
+        osInfo:        osInfo,
+        compatibility: compatibility,
     }
 }
 
@@ -415,7 +488,7 @@ func (m actionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // buildCommand assembles the command string for the selected tool and current
-// field values. It is called when exiting the model.
+// field values using compatibility matrix for OS-specific adaptations.
 func (m actionModel) buildCommand() string {
     // Build a map of field values keyed by their keys.
     values := make(map[string]interface{})
@@ -446,8 +519,23 @@ func (m actionModel) buildCommand() string {
             values[e.key] = e.choices[*e.idx]
         }
     }
-    // Render template for selected tool.
-    template := m.action.Template[m.tools[m.toolIdx]]
+    
+    // Get template and build base command
+    currentTool := m.tools[m.toolIdx]
+    template := m.action.Template[currentTool]
+    result := m.renderTemplate(template, values)
+    
+    // Apply OS-specific adaptations if compatibility matrix is available
+    if m.compatibility != nil && m.osInfo != nil {
+        // For now, we'll enhance this further when we implement more sophisticated flag adaptation
+        // The current template system already handles basic variations
+    }
+    
+    return result
+}
+
+// renderTemplate processes template placeholders and returns the final command
+func (m actionModel) renderTemplate(template string, values map[string]interface{}) string {
     result := ""
     i := 0
     for i < len(template) {
@@ -455,94 +543,140 @@ func (m actionModel) buildCommand() string {
         if strings.HasPrefix(template[i:], "{{") {
             end := strings.Index(template[i:], "}}")
             if end < 0 {
-                // unmatched braces; append rest
-                result += template[i:]
-                break
+                // Unmatched {{, treat as literal text
+                result += "{{"
+                i += 2
+                continue
             }
+            // Extract and process placeholder content.
             placeholder := template[i+2 : i+end]
-            // Parse placeholder: key[?] or key|fmt or key|fmt? etc.
-            if strings.Contains(placeholder, "|") {
-                parts := strings.SplitN(placeholder, "|", 2)
-                key := parts[0]
-                format := parts[1]
-                v, ok := values[key]
-                if ok {
-                    // Use Sprintf with format specifier, trimming leading % if present.
-                    if strings.HasPrefix(format, "%") {
-                        result += fmt.Sprintf(format, v)
-                    } else {
-                        result += fmt.Sprintf(format, v)
-                    }
-                }
-            } else if strings.Contains(placeholder, "?") {
-                // Conditional placeholder: key?value
-                parts := strings.SplitN(placeholder, "?", 2)
-                key := parts[0]
-                flag := parts[1]
-                v, ok := values[key]
-                if ok {
-                    switch bv := v.(type) {
-                    case bool:
-                        if bv {
-                            result += flag
-                        }
-                    case string:
-                        if bv != "" {
-                            result += flag
-                        }
-                    case int:
-                        if bv != 0 {
-                            result += flag
-                        }
-                    case float64:
-                        if bv != 0 {
-                            result += flag
-                        }
-                    }
-                }
-            } else {
-                // Simple key replacement
-                v, ok := values[placeholder]
-                if ok {
-                    switch vv := v.(type) {
-                    case string:
-                        result += vv
-                    case bool:
-                        if vv {
-                            result += "true"
-                        } else {
-                            result += "false"
-                        }
-                    case int:
-                        result += strconv.Itoa(vv)
-                    case float64:
-                        // Convert float to string without trailing zeros.
-                        result += fmt.Sprintf("%g", vv)
-                    default:
-                        result += fmt.Sprint(vv)
-                    }
-                }
-            }
+            result += m.processPlaceholder(placeholder, values)
             i += end + 2
         } else {
             result += string(template[i])
             i++
         }
     }
+    // Clean up extra spaces
     fields := strings.Fields(result)
     return strings.Join(fields, " ")
+}
+
+// processPlaceholder handles individual placeholder processing
+func (m actionModel) processPlaceholder(placeholder string, values map[string]interface{}) string {
+    result := ""
+    
+    // Parse placeholder: key[?] or key|fmt or key|fmt? etc.
+    if strings.Contains(placeholder, "|") {
+        parts := strings.SplitN(placeholder, "|", 2)
+        key := parts[0]
+        format := parts[1]
+        v, ok := values[key]
+        if ok {
+            // Use Sprintf with format specifier, trimming leading % if present.
+            if strings.HasPrefix(format, "%") {
+                result += fmt.Sprintf(format, v)
+            } else {
+                result += fmt.Sprintf(format, v)
+            }
+        }
+    } else if strings.Contains(placeholder, "?") {
+        // Conditional placeholder: key?value
+        parts := strings.SplitN(placeholder, "?", 2)
+        key := parts[0]
+        flag := parts[1]
+        v, ok := values[key]
+        if ok {
+            switch bv := v.(type) {
+            case bool:
+                if bv {
+                    result += flag
+                }
+            case string:
+                if bv != "" {
+                    result += flag
+                }
+            case int:
+                if bv != 0 {
+                    result += flag
+                }
+            case float64:
+                if bv != 0 {
+                    result += flag
+                }
+            }
+        }
+    } else {
+        // Simple key replacement
+        v, ok := values[placeholder]
+        if ok {
+            switch vv := v.(type) {
+            case string:
+                result += vv
+            case bool:
+                if vv {
+                    result += "true"
+                } else {
+                    result += "false"
+                }
+            case int:
+                result += strconv.Itoa(vv)
+            case float64:
+                // Convert float to string without trailing zeros.
+                result += fmt.Sprintf("%g", vv)
+            default:
+                result += fmt.Sprint(vv)
+            }
+        }
+    }
+    
+    return result
 }
 
 // View renders the current form state. A colourful header and instructions
 // precede the list of inputs and options. The entire view is wrapped in a
 // rounded border to provide an app‑like feel.
 func (m actionModel) View() string {
-    // Colourful header with action title and current tool.
+    // Enhanced header with action title, current tool, and system info
     title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render(m.action.Title)
-    tool := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(fmt.Sprintf("Tool: %s", m.tools[m.toolIdx]))
-    header := fmt.Sprintf("%s • %s  (Ctrl+T next tool)\n", title, tool)
+    
+    // Show current tool with version info if available
+    currentTool := m.tools[m.toolIdx]
+    toolDisplay := currentTool
+    if m.osInfo != nil && m.compatibility != nil {
+        if version, err := detect.GetToolVersion(currentTool); err == nil && version.Version != "" {
+            toolDisplay = fmt.Sprintf("%s v%s", currentTool, version.Version)
+        }
+    }
+    tool := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(fmt.Sprintf("Tool: %s", toolDisplay))
+    
+    // Show OS info
+    var osInfo string
+    if m.osInfo != nil {
+        osInfo = fmt.Sprintf("%s", m.osInfo.OS)
+        if m.osInfo.Distro != "" {
+            osInfo = fmt.Sprintf("%s (%s)", osInfo, m.osInfo.Distro)
+        }
+        osInfo = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render(fmt.Sprintf("OS: %s", osInfo))
+    }
+    
+    // Build header line
+    var header string
+    if osInfo != "" {
+        header = fmt.Sprintf("%s • %s • %s", title, tool, osInfo)
+    } else {
+        header = fmt.Sprintf("%s • %s", title, tool)
+    }
+    
+    // Show alternatives if available
+    if len(m.tools) > 1 {
+        header += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(" (Ctrl+T next tool)")
+    }
+    header += "\n"
+    
     instructions := "TAB to switch fields • ENTER to toggle/build • +/- to adjust • ESC to cancel"
     header += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(instructions) + "\n\n"
+    
     // Render text inputs in sorted order.
     keys := make([]string, 0, len(m.strInputs))
     for k := range m.strInputs {
